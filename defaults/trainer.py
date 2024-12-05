@@ -36,6 +36,7 @@ class Trainer(BaseTrainer):
         self.optimizer = wraped_defs.optimizer 
         self.scheduler = wraped_defs.schedulers
         self.metric_fn = wraped_defs.metric
+        # self.use_metadata = wraped_defs.
         
         self.org_model_state = model_to_CPU_state(self.model)
         self.org_optimizer_state = opimizer_to_CPU_state(self.optimizer)
@@ -59,6 +60,10 @@ class Trainer(BaseTrainer):
         epoch_bar = range(self.epoch0 + 1, self.epoch0 + self.epochs + 1)
         if self.is_rank0:
             epoch_bar = tqdm(epoch_bar, desc='Epoch', leave=False)
+        
+        self.epoch=0
+        self.epoch_step()  # first evaluation
+        # self.save_session(verbose=True)
             
         for self.epoch in epoch_bar:            
             self.model.train() 
@@ -81,7 +86,7 @@ class Trainer(BaseTrainer):
                 
             if not self.save_best_model and not self.is_grid_search:
                 self.best_model = model_to_CPU_state(self.model)   
-                self.save_session()                         
+                self.save_session(verbose=True)                         
                 
         if self.is_rank0:         
             print(" ==> Training done")
@@ -96,17 +101,31 @@ class Trainer(BaseTrainer):
         If using DDP, metrics (e.g. accuracy) are calculated with dist.all_gather
         """
         self.optimizer.zero_grad()
+        use_metadata = self.trainloader.dataset.use_metadata
+        no_visual_encoding = self.trainloader.dataset.no_visual_encoding
         
         metric = kwargs['metric']        
-        images, labels = kwargs['batch']
+        data, labels = kwargs['batch']
         if len(labels) == 2 and isinstance(labels, list):
             ids    = labels[1]
             labels = labels[0]
         labels = labels.to(self.device_id, non_blocking=True)
-        images = images.to(self.device_id, non_blocking=True) 
+        if use_metadata:
+            img, mtdt = data
+            images = img.to(self.device_id, non_blocking=True)
+            metadata = mtdt.to(self.device_id, non_blocking=True)
+        else : 
+            images = data.to(self.device_id, non_blocking=True)
+        
         
         with autocast(self.use_mixed_precision):
-            outputs = self.model(images)
+            if use_metadata:
+                if no_visual_encoding:
+                    outputs = self.model.forward_only_metadata(metadata)
+                else:
+                    outputs = self.model.forward_with_metadata(images, metadata)
+            else :
+                outputs = self.model(images)
             loss = self.criterion(outputs, labels)
 
         if not self.use_mixed_precision:
@@ -133,7 +152,9 @@ class Trainer(BaseTrainer):
                 if self.is_rank0:
                     self.logging({'train_loss': loss.item(),
                                  'learning_rate': self.get_lr()})
-                    self.logging(_metric)               
+                    print('\n', "loss : ", loss.item())
+                    self.logging(_metric)
+                 
     
     def epoch_step(self, **kwargs): 
         """Function for periodic validation, LR updates and model saving.
@@ -171,6 +192,8 @@ class Trainer(BaseTrainer):
         
         knn_nhood = dataloader.dataset.knn_nhood
         n_classes = dataloader.dataset.n_classes
+        use_metadata = dataloader.dataset.use_metadata
+        no_visual_encoding = dataloader.dataset.no_visual_encoding
         target_metric = dataloader.dataset.target_metric
         if self.is_rank0:
             metric = self.metric_fn(n_classes, dataloader.dataset.int_to_labels, mode="val")
@@ -183,17 +206,32 @@ class Trainer(BaseTrainer):
         val_loss = []
         feature_bank = []
         with torch.no_grad():
-            for images, labels in iter_bar:
+            for data, labels in iter_bar:
                 if len(labels) == 2 and isinstance(labels, list):
                     ids    = labels[1]
                     labels = labels[0]
                 labels = labels.to(self.device_id, non_blocking=True)
-                images = images.to(self.device_id, non_blocking=True)
+                
+                if use_metadata:
+                    img, mtdt = data
+                    images = img.to(self.device_id, non_blocking=True)
+                    metadata = mtdt.to(self.device_id, non_blocking=True)
+                else : 
+                    images = data.to(self.device_id, non_blocking=True)
 
                 if is_ddp(self.model):
+                    if use_metadata:
+                        raise Exception("Not Implemented")
                     outputs, features = self.model.module(images, return_embedding=True)
                 else:
-                    outputs, features = self.model(images, return_embedding=True)
+                    if use_metadata:
+                        if no_visual_encoding:
+                            outputs = self.model.forward_only_metadata(metadata)
+                            features = None
+                        else:
+                            outputs, features = self.model.forward_with_metadata(images, metadata, return_embedding=True)
+                    else :
+                        outputs, features = self.model(images, return_embedding=True)
                     
                 if self.log_embeddings:
                     feature_bank.append(features.clone().detach().cpu())   
@@ -216,6 +254,8 @@ class Trainer(BaseTrainer):
             self.build_umaps(feature_bank, dataloader, labels = knn_metric.truths, mode='val')
             
         self.val_loss = np.array(val_loss).mean()
+        print('\n', "val_loss : ", self.val_loss)
+
         eval_metrics = metric.get_value(use_dist=isinstance(dataloader,DS))
         if self.knn_eval:
             eval_metrics.update(knn_metric.get_value(use_dist=isinstance(dataloader,DS)))
@@ -257,10 +297,11 @@ class Trainer(BaseTrainer):
             
         
         if dataloader == None:
-            dataloader=self.testloader  
+            dataloader=self.testloader 
             
         results_dir = os.path.join(self.save_dir, 'results', self.model_name)
         metrics_path = os.path.join(results_dir, "metrics_results.json")
+        preds_path = os.path.join(results_dir, "predictions_results.json")
         check_dir(results_dir)   
 
         test_loss = []
@@ -268,6 +309,8 @@ class Trainer(BaseTrainer):
         results = edict()
         knn_nhood = dataloader.dataset.knn_nhood
         n_classes = dataloader.dataset.n_classes    
+        use_metadata = dataloader.dataset.use_metadata
+        no_visual_encoding = dataloader.dataset.no_visual_encoding
         target_metric = dataloader.dataset.target_metric
         if self.is_supervised:
             metric = self.metric_fn(n_classes, dataloader.dataset.int_to_labels, mode="test")
@@ -277,17 +320,37 @@ class Trainer(BaseTrainer):
         predictions  = np.empty((1, n_classes))
         truths = torch.tensor([], dtype=torch.long, device=self.device_id)
         with torch.no_grad():
-            for images, labels in iter_bar: 
+            for data, labels in iter_bar: 
                 if len(labels) == 2 and isinstance(labels, list):
                     ids    = labels[1]
                     labels = labels[0]
                 labels = labels.to(self.device_id, non_blocking=True)
-                images = images.to(self.device_id, non_blocking=True)                   
+                    
+                #######
                 
+                if use_metadata:
+                    img, mtdt = data
+                    images = img.to(self.device_id, non_blocking=True)
+                    metadata = mtdt.to(self.device_id, non_blocking=True)
+                else : 
+                    images = data.to(self.device_id, non_blocking=True)
+
                 if is_ddp(self.model):
+                    if use_metadata:
+                        raise Exception("Not Implemented")
                     outputs, features = self.model.module(images, return_embedding=True)
                 else:
-                    outputs, features = self.model(images, return_embedding=True)
+                    if use_metadata:
+                        if no_visual_encoding:
+                            outputs = self.model.forward_only_metadata(metadata)
+                            features = None
+                        else:
+                            outputs, features = self.model.forward_with_metadata(images, metadata, return_embedding=True)
+                    else :
+                        outputs, features = self.model(images, return_embedding=True)
+                    
+                #######
+
                     
                 if self.log_embeddings:
                     feature_bank.append(features.clone().detach().cpu())                      
@@ -305,9 +368,8 @@ class Trainer(BaseTrainer):
                     metric.add_preds(outputs, labels)
 
                 
-                
                 predictions = np.vstack((predictions, outputs.cpu().detach().numpy()))
-                truths = torch.cat([truths, labels], dim=0)
+                truths = torch.cat([truths, labels.type(torch.int64)], dim=0)
         
         if self.log_embeddings:
             self.build_umaps(feature_bank, dataloader, labels = metric.truths if self.is_supervised else knn_metric.truths, 
@@ -331,6 +393,7 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.set_models_precision(self.use_mixed_precision)
         save_json(test_metrics, metrics_path)
+        save_json({"truth" : metric.truths,"predictions" : metric.predictions}, preds_path)
         if has_knn:
             splitted = self.model_name.split("-run_")
             if len(splitted) == 1:

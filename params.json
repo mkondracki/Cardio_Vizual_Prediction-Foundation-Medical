@@ -1,19 +1,21 @@
 {
   "dataset_params":{
-      "dataset":"APTOS2019",
-      "data_location":"/storage/medical_data",
+      "dataset":"FAME2",
+      "data_location":"/data/mkondrac/foundation_model_cardio/code/Foundation-Medical/storage/FAME2/FOLD_2",
       "train_transforms":{
           "Resize":{
-              "apply":true,
+              "apply":false,
               "height":256,
               "width":256
           },
           "CenterCrop":{
-              "apply":true,
-              "height":224,
-              "width":224
+              "apply":false,
+              "height":308,
+              "width":308
           },
           "Normalize":true,
+
+
           "VerticalFlip":{
               "apply":true,
               "p":0.5
@@ -28,7 +30,7 @@
               "p":0.5
           },
           "RandomGrayscale":{
-              "apply":false,
+              "apply":true,
               "p":0.2
           },
           "RandomCrop":{
@@ -79,7 +81,7 @@
               "p":0.5
           },
           "RandomGaussianBlur":{
-              "apply":false,
+              "apply":true,
               "radius_min":0.1,
               "radius_max":2.0,
               "p":0.2
@@ -90,7 +92,7 @@
               "p":0.2
           },
           "RandomResizedCrop":{
-              "apply":true,
+              "apply":false,
               "size":224,
               "scale":[
                   0.8,
@@ -121,52 +123,52 @@
       },
       "val_transforms":{
           "Resize":{
-              "apply":true,
+              "apply":false,
               "height":256,
               "width":256
           },
           "CenterCrop":{
-              "apply":true,
-              "height":224,
-              "width":224
+              "apply":false,
+              "height":308,
+              "width":308
           },
           "Normalize":true
       },
       "test_transforms":{
           "Resize":{
-              "apply":true,
+              "apply":false,
               "height":256,
               "width":256
           },
           "CenterCrop":{
-              "apply":true,
-              "height":224,
-              "width":224
+              "apply":false,
+              "height":308,
+              "width":308
           },
           "Normalize":true
       }
   },
   "dataloader_params":{
       "trainloader":{
-          "batch_size":64,
+          "batch_size":32,
           "num_workers":4,
           "prefetch_factor":4,
           "shuffle":true,
           "pin_memory":true,
-          "drop_last":true,
+          "drop_last":false,
           "persistent_workers":true
       },
       "valloader":{
-          "batch_size":64,
+          "batch_size":32,
           "num_workers":4,
           "prefetch_factor":4,
-          "shuffle":true,
+          "shuffle":false,
           "pin_memory":true,
-          "drop_last":true,
+          "drop_last":false,
           "persistent_workers":false
       },
       "testloader":{
-          "batch_size":64,
+          "batch_size":32,
           "num_workers":4,
           "prefetch_factor":4,
           "shuffle":false,
@@ -176,7 +178,7 @@
       }
   },
   "model_params":{
-      "backbone_type":"deit_base",
+      "backbone_type":"none",
       "cnn_params":{
           "pretrained_type":"supervised"
       },
@@ -188,14 +190,17 @@
           "pretrained_type":"supervised",
           "is_memory_efficient":false
       },
-      "pretrained":true,
-      "freeze_backbone":false
+      "pretrained":false,
+      "freeze_backbone":false,
+      "use_metadata":true,
+      "no_visual_encoding":true
+      
   },
   "foundation_params":{
-      "backbone_type":"focal",
+      "backbone_type":"dinov2_vitl14",
       "img_size":224,
       "pretrained":true,
-      "freeze_backbone":true,
+      "freeze_backbone":false,
       "partial":{
           "unfreeze_cutoff":-1,
           "drop_cutoff":[]
@@ -207,8 +212,8 @@
               "type":"AdamW",
               "autoscale_lr":false,
               "params":{
-                  "lr":1e-4,
-                  "weight_decay":1e-5
+                  "lr":1e-4, 
+                  "weight_decay":0.05
               }
           },
           "LARS_params":{
@@ -225,7 +230,7 @@
                   "ReduceLROnPlateau":{
                       "mode":"max",
                       "factor":0.1,
-                      "patience":2,
+                      "patience":10,
                       "verbose":true
                   },
                   "OneCycleLR":{
@@ -252,10 +257,10 @@
       }
   },
   "training_params":{
-      "model_name":"APTOS2019",
+      "model_name":"FAME2_DiNO_FOLD_2",
       "epochs":100,
       "val_every":1,
-      "log_every":100,
+      "log_every":1,
       "save_best_model":true,
       "log_embeddings":false,
       "knn_eval":false,
@@ -264,15 +269,15 @@
       "restore_only_model":false,
       "use_tensorboard":false,
       "use_mixed_precision":true,
-      "save_dir":"results"
+      "save_dir":"/data/mkondrac/foundation_model_cardio/code/Foundation-Medical/saved_checkpoints/dinov2_vitl14/global_features/FOLD_2"
   },
   "system_params":{
       "use_all_GPUs":false,
-      "which_GPUs":"4",
+      "which_GPUs":"cuda:0",
       "use_GPU":true
   },
   "log_params":{
-      "project_name":"medical_foundation",
+      "project_name":"medical_foundation_2",
       "run_name":"DEFINED_BY_MODEL_NAME"
   },
   "lr_finder":{
@@ -289,7 +294,7 @@
   },
   "transfer_learning_params":{
       "use_pretrained":false,
-      "pretrained_model_name":"",
+      "pretrained_model_name":"dinov2_vitl14",
       "pretrained_path":""
   }
 }

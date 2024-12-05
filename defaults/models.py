@@ -47,6 +47,9 @@ class Classifier(BaseModel):
         
         elif 'dinov2' in self.backbone_type:
             self.backbone = transformers.__dict__[self.backbone_type]()
+            # metadata_len_out = 0
+            # if self.use_metadata:
+            #     metadata_len_out = self.metadata_len
             if self.backbone_type == 'dinov2_vits14':
                 self.fc = nn.Linear(384, self.n_classes)
             elif self.backbone_type == 'dinov2_vitl14':
@@ -55,6 +58,29 @@ class Classifier(BaseModel):
                 self.fc = nn.Linear(1536, self.n_classes)
             else:
                 self.fc = nn.Linear(768, self.n_classes)
+            
+            if self.use_metadata:
+                # self.fc_projector = nn.Sequential(
+                #     nn.Linear(self.metadata_len, 128),  
+                #     nn.ReLU(),                        
+                #     nn.Linear(128, 512), 
+                #     nn.ReLU(),                      
+                #     nn.Linear(512, self.fc.in_features)  
+                # )
+                # self.fc = nn.Linear(self.fc.in_features*2, self.n_classes)
+                
+                head_coef = 2 - int(self.no_visual_encoding)
+                
+                self.fc_projector = nn.Linear(self.metadata_len, self.fc.in_features)
+                self.fc =  nn.Sequential(
+                        nn.Linear(self.fc.in_features*head_coef, 512),  
+                        nn.ReLU(),                        
+                        nn.Linear(512, 128), 
+                        nn.ReLU(),                      
+                        nn.Linear(128, self.n_classes)  
+                    )
+                
+            
             if self.img_channels != 3:
                 patch_embed_attrs = ["patch_size", "embed_dim"]
                 patch_defs = {attr: getattr(self.backbone.patch_embed, attr) for attr in patch_embed_attrs}
@@ -182,11 +208,22 @@ class Classifier(BaseModel):
                     self.partial_unfreeze()
           
 
-    def forward(self, x, return_embedding=False):
+    def forward(self, x_in, return_embedding=False):
         with autocast(self.use_mixed_precision):
             
             if self.freeze_backbone:
                 self.backbone.eval()
+            
+            if self.use_metadata:
+                if isinstance(x_in, tuple):
+                    x = x_in[0]
+                    meta_data = x_in[1]
+                    
+                else :
+                    raise Exception("use_metadata set to true, but x is not a tuple")
+            else : 
+                x = x_in
+                
                 
             if isinstance(x, list) and hasattr(cnn_models, self.backbone_type):
                 idx_crops = torch.cumsum(torch.unique_consecutive(
@@ -210,9 +247,13 @@ class Classifier(BaseModel):
                     x_cls = self.backbone.head(features['x_norm_clstoken'])
                     x_emb = features['x_prenorm']
                     if return_embedding:
+                        if self.use_metadata:
+                            return self.fc(torch.cat((x_cls, meta_data))), x_cls
                         return self.fc(x_cls), x_cls
                     else:
                         if self.linear:
+                            if self.use_metadata:
+                                return self.fc(torch.cat((x_cls, meta_data)))
                             return self.fc(x_cls)
                         else:
                             return x_emb
@@ -271,6 +312,68 @@ class Classifier(BaseModel):
                 return x, x_emb
             else:
                 return x
+    
+    
+    
+    
+    def forward_with_metadata(self, x, metadata, return_embedding=False):
+        with autocast(self.use_mixed_precision):
+            
+            if self.freeze_backbone:
+                self.backbone.eval()
+                
+                
+            if isinstance(x, list) and hasattr(cnn_models, self.backbone_type):
+                idx_crops = torch.cumsum(torch.unique_consecutive(
+                    torch.tensor([inp.shape[-1] for inp in x]),
+                    return_counts=True,
+                )[1], 0)
+                start_idx = 0
+                for end_idx in idx_crops:
+                    _out = self.backbone(torch.cat(x[start_idx: end_idx]))
+                    if start_idx == 0:
+                        x_emb = _out
+                    else:
+                        x_emb = torch.cat((x_emb, _out))
+                    start_idx = end_idx             
+            else:
+                if 'dinov2' in self.backbone_type:
+                    if self.partial.drop_cutoff: # If a drop_cuttoff is specified
+                        features = self.backbone.forward_features(x, return_block=self.partial.drop_cutoff)
+                    else:
+                        features = self.backbone.forward(x,is_training=True)
+                    x_cls = self.backbone.head(features['x_norm_clstoken'])
+                    x_emb = features['x_prenorm']
+                    if return_embedding:
+                        # m_cls = self.fc_meta(metadata)
+                        m_cls = self.fc_projector(metadata)
+                        return self.fc(torch.cat((x_cls, m_cls), 1)), x_cls
+                    else:
+                        if self.linear:
+                            # m_cls = self.fc_meta(metadata)
+                            m_cls = self.fc_projector(metadata)
+                            return self.fc(torch.cat((x_cls, m_cls), 1))
+                        else:
+                            return x_emb
+                else:
+                    raise Exception("Not Implemented")
+                
+                
+    def forward_only_metadata(self, metadata):
+        with autocast(self.use_mixed_precision):
+            
+            if self.freeze_backbone:
+                self.backbone.eval()
+                
+            if 'dinov2' in self.backbone_type:
+                if self.linear:
+                    # m_cls = self.fc_meta(metadata)
+                    m_cls = self.fc_projector(metadata)
+                    return self.fc(m_cls)
+                else:
+                    raise Exception("Not Implemented")
+            else:
+                raise Exception("Not Implemented")
             
 
     def partial_unfreeze(self):

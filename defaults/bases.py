@@ -426,12 +426,13 @@ class BaseTrainer:
     def load_session(self, restore_only_model=False, model_path=None):
         self.get_saved_model_path(model_path=model_path)
         if os.path.isfile(self.model_path) and self.restore_session:        
-            print("Loading model from {}".format(self.model_path))
+            print("\n Loading model from {}".format(self.model_path))
             checkpoint = torch.load(self.model_path)
             if is_parallel(self.model):
                 self.model.module.load_state_dict(checkpoint['state_dict'])
             else:
                 self.model.load_state_dict(checkpoint['state_dict'])
+                print("MODEL LOADED")
             self.model.to(self.device_id)
             self.org_model_state = model_to_CPU_state(self.model)
             self.best_model = deepcopy(self.org_model_state)
@@ -464,7 +465,7 @@ class BaseTrainer:
         else:
             self.model_path = os.path.abspath(model_path)
         
-    def save_session(self, model_path=None, verbose=False):
+    def save_session(self, model_path=None, verbose=True):
         if self.is_rank0:
             self.get_saved_model_path(model_path=model_path)
             if verbose:

@@ -5,12 +5,133 @@ from torchvision.transforms import ToTensor, ToPILImage
 
 
 DATA_INFO = {
+              "FAME2": {"dataset_location": "FAME2"},
               "DDSM": {"dataset_location": "DDSM"},
               "CheXpert": {"dataset_location": "CheXpert"},
               "ISIC2019": {"dataset_location": "ISIC2019"},
               "APTOS2019": {"dataset_location": "APTOS2019"},
               "Camelyon": {"dataset_location": "Camelyon"},    
 }
+
+
+class FAME2(BaseSet):
+    
+    img_channels = 3
+    is_multiclass = False
+    task = 'classification'
+    mean = (0.485, 0.456, 0.406)
+    std = (0.229, 0.224, 0.225)
+    int_to_labels = {
+        0: 'VOCE=0',
+        1: 'VOCE=1'
+    }
+    target_metric = 'roc_auc'
+    knn_nhood = 200    
+    n_classes = 1
+    # len(int_to_labels)
+    labels_to_int = {val: key for key, val in int_to_labels.items()}
+    
+    # meta_stats= {"mean":{'ffr':0.737093, 'ref_diam':2.996554, 'les_len':14.240359, 'ds':52.881134, 'age':64.151472, 'male':0.730797, 'smoker':0.208902}, 
+    #              "std":{'ffr':0.150261, 'ref_diam':6.479152, 'les_len':26.297266, 'ds':15.140177, 'age':9.823333, 'male':0.443705, 'smoker':0.406670}}
+    
+    
+    def __init__(self, dataset_params, mode='train'):
+        self.attr_from_dict(dataset_params)
+        self.dataset_location = DATA_INFO["FAME2"]["dataset_location"]
+        self.root_dir = self.data_location
+        self.mode = mode
+        
+        if dataset_params.use_metadata:
+            self.data, self.metadata_len = self.get_data_metadata_as_list()
+        else : 
+            self.data = self.get_data_as_list()
+            self.metadata_len = 0
+        
+        self.transform, self.resizing = self.get_transforms()
+        
+    def get_data_as_list(self):
+        data_list = []
+        if self.mode == 'train':
+            data = pd.read_csv(os.path.join(self.root_dir, 'train.csv'), engine='python')[['img_path', 'label']]
+        elif self.mode in ['val', 'eval']:
+            data = pd.read_csv(os.path.join(self.root_dir, 'val.csv'), engine='python')[['img_path', 'label']]
+        else:
+            data = pd.read_csv(os.path.join(self.root_dir, 'test.csv'), engine='python')[['img_path', 'label']]
+        labels = data['label'].values.tolist()
+        img_paths = data['img_path'].values.tolist()
+        data_list = [{'img_path': img_path, 'label': [float(label)], 'dataset': self.name}
+                     for img_path, label in zip(img_paths, labels)]
+                    
+        return data_list 
+
+    def get_data_metadata_as_list(self):
+        data_list = []
+        if self.mode == 'train':
+            data = pd.read_csv(os.path.join(self.root_dir, 'train.csv'), engine='python')
+            # [['img_path', 'label', 'ffr','lesid','ref_diam','les_len','ds','age','male','smoker']]
+        elif self.mode in ['val', 'eval']:
+            data = pd.read_csv(os.path.join(self.root_dir, 'val.csv'), engine='python')
+        else:
+            data = pd.read_csv(os.path.join(self.root_dir, 'test.csv'), engine='python')
+        
+        img_paths = data['img_path'].values.tolist()
+        labels = data['label'].values.tolist()
+        metadata = data.drop(['img_path', 'label', 'CARDIO_ID', 'LES_ID'], axis=1)
+        metadata_columns = metadata.columns.tolist()
+        metadata_values = metadata.values.tolist()
+
+        data_list = [
+            {
+                'img_path': img_path,
+                'label': [float(label)],
+                'metadata': {col: float(val) if isinstance(val, (int, float)) else val for col, val in zip(metadata_columns, meta_row)},
+                'dataset': self.name
+            }
+            for img_path, label, meta_row in zip(img_paths, labels, metadata_values)
+        ]
+
+        metadata_len = len(metadata_columns)
+
+        return data_list, metadata_len
+    
+    
+    def __getitem__(self, idx): 
+        
+        img_path = self.data[idx]['img_path']
+        label = torch.as_tensor(self.data[idx]['label'])
+        
+        png_path = '.'.join(img_path.split('.')[:-1]) + '.png'
+        if os.path.exists(png_path):
+            img = self.get_x(png_path)
+            img_path = png_path
+        else:
+            img = self.get_x(img_path)
+
+        if self.resizing is not None:
+            img = self.resizing(img)
+
+        if self.transform is not None:
+            if isinstance(self.transform, list):
+                img = [tr(img) for tr in self.transform]
+            else:
+                if self.is_multi_crop:
+                    img = self.multi_crop_aug(img, self.transform)
+                else:
+                    img = [self.transform(img) for _ in range(self.num_augmentations)]
+            img = img[0] if len(img) == 1 and isinstance(img, list) else img      
+        
+        data = img
+        if self.use_metadata:
+            meta_idx = self.data[idx]['metadata']
+            
+            metadata = torch.as_tensor([meta_idx[feat] for feat in meta_idx.keys()]) 
+            
+            data = (img, metadata)
+        
+        return data, label
+    
+    
+    
 
 
 class CheXpert(BaseSet):
@@ -236,6 +357,8 @@ class ISIC2019(BaseSet):
                      for img_path, label in zip(img_paths, labels)]
                     
         return data_list  
+
+
     
     
 class APTOS2019(BaseSet):

@@ -76,6 +76,25 @@ def launch(main_func, args=()):
         main_func(*args)
 
 
+def launch_single_GPU(main_func, args=()):
+    """
+    Simplified launch for single GPU without distributed computation.
+    """
+    params, arguments = args
+
+    # define system parameters
+    define_system_params(params["system_params"])
+    world_size = torch.cuda.device_count()
+
+    # Ensure we use only one GPU
+    if world_size > 0:
+        torch.cuda.set_device(1)  
+    else:
+        raise RuntimeError("No GPUs available.")
+
+    main_func(params, arguments)
+
+
 def _distributed_worker(rank, main_func, world_size, dist_url, args):
     assert torch.cuda.is_available(), "cuda is not available. Please check your installation."
     try:

@@ -4,7 +4,7 @@ import torch.distributed as dist
 def is_rank0(device_id=None):
     if device_id is None:
         device_id = torch.cuda.current_device()
-    return device_id == 0
+    return device_id == 0 or device_id == 1
 
 def is_ddp(_class):
     return isinstance(_class, torch.nn.parallel.DistributedDataParallel)

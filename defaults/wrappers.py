@@ -61,6 +61,10 @@ class DefaultWrapper:
         target_metric = self.dataloaders.trainloader.dataset.target_metric
         print_ddp(f"The default metric has been set to : \033[94m{target_metric}\033[0m")
         
+        assert self.dataloaders['trainloader'].dataset.metadata_len == self.dataloaders['valloader'].dataset.metadata_len == self.dataloaders['testloader'].dataset.metadata_len, "Metadata lengths are not the same"
+        
+        self.model_params.metadata_len = self.dataloaders['trainloader'].dataset.metadata_len
+        
         self.model_params.img_channels = img_channels
         self.model_params.knn_nhood = knn_nhood
         self.model_params.target_metric = target_metric
@@ -69,7 +73,7 @@ class DefaultWrapper:
         self.model_params.n_classes = n_classes
         is_multiclass = self.dataloaders.trainloader.dataset.is_multiclass
         if not is_multiclass and n_classes <= 2:
-            print("\033[93m Binary multi-label problem found: CHANING THE n_classes to 1\033[0m")
+            print("\033[93m Binary multi-label problem found: CHANGING THE n_classes to 1\033[0m")
             self.model_params.n_classes = 1
         
         # adding transfusion checkpoint dir
@@ -124,11 +128,14 @@ class DefaultWrapper:
         """ 
         feature_bank_set, feature_bank_Loader = None, None
         DataSet = self.dataset_mapper.get(self.dataset_params.dataset, False)
+        
         assert DataSet, "Dataset not found - Plese select one of the following: {}".format(list(self.dataset_mapper.keys()))
 
         trainset = DataSet(self.dataset_params, mode='train')
         valset   = DataSet(self.dataset_params, mode='eval')
         testset  = DataSet(self.dataset_params, mode='test')
+        
+        self.dataloader_params['metadata_len'] = trainset.metadata_len
 
         #print(len(valset))
         if self.training_params.knn_eval or not self.is_supervised:
@@ -156,7 +163,7 @@ class DefaultWrapper:
             self.dataloader_params['trainloader']['shuffle'] = False
 
         # define distributed samplers etc
-        trainLoader = DataLoader(trainset, **self.dataloader_params['trainloader'],sampler=train_sampler)
+        trainLoader = DataLoader(trainset, **self.dataloader_params['trainloader'], sampler=train_sampler)
         testLoader  = DataLoader(testset, **self.dataloader_params['testloader'])
         if len(valset) > 0 :
             valLoader   = DataLoader(valset, **self.dataloader_params['valloader'])
@@ -173,6 +180,8 @@ class DefaultWrapper:
             valLoader = testLoader            
             if self.is_rank0:
                 warnings.warn("Warning... Using test set as validation set")
+                
+        self.dataloader_params['trainloader']['shuffle'] = train_shuffle
 
         return edict({'trainloader': trainLoader,
                          'valloader' : valLoader,
@@ -391,6 +400,7 @@ class DefaultWrapper:
     @property
     def dataset_mapper(self):
         return {
+            "FAME2" : FAME2,
             "CheXpert" : CheXpert,
             "DDSM" : DDSM,
             "ISIC2019": ISIC2019,
@@ -457,6 +467,8 @@ class DINOWrapper(DefaultWrapper):
         self.foundation_params.target_metric = self.model_params.target_metric
         self.foundation_params.n_classes = self.model_params.n_classes
         self.foundation_params.linear = False
+        self.foundation_params.use_metadata = self.model_params.use_metadata
+        self.foundation_params.no_visual_encoding = self.model_params.no_visual_encoding
         print_ddp(f"\033[94m\tInit foundation model\033[0m")
         foundation_model = Classifier(self.foundation_params)
         foundation_model.fc = Identity()
@@ -567,6 +579,10 @@ class FoundationWrapper(DefaultWrapper):
         self.foundation_params.target_metric = self.model_params.target_metric
         self.foundation_params.n_classes = self.model_params.n_classes
         self.foundation_params.linear = True
+        self.foundation_params.use_metadata = self.model_params.use_metadata
+        self.foundation_params.no_visual_encoding = self.model_params.no_visual_encoding
+        self.foundation_params.metadata_len = self.model_params.metadata_len
+        
         model = Classifier(self.foundation_params)
         model.to(self.device_id)
         if self.visible_world > 1 and torch.distributed.is_initialized():

@@ -93,9 +93,15 @@ class DefaultClassificationMetrics:
             roc_preds = self.roc_preds
                 
         accuracy = metrics.accuracy_score(truths, predictions)
-        precision = metrics.precision_score(truths, predictions, average='macro', zero_division=0)
-        recall = metrics.recall_score(truths, predictions, average='macro', zero_division=0)
-        f1 = metrics.f1_score(truths, predictions, average='macro', zero_division=0) 
+        
+        # precision = metrics.precision_score(truths, predictions, average='macro', zero_division=0)
+        # recall = metrics.recall_score(truths, predictions, average='macro', zero_division=0)
+        # f1 = metrics.f1_score(truths, predictions, average='macro', zero_division=0) 
+        
+        precision = metrics.precision_score(truths, predictions, zero_division=0)
+        recall = metrics.recall_score(truths, predictions, zero_division=0)
+        f1 = metrics.f1_score(truths, predictions, zero_division=0) 
+        
         kappa = metrics.cohen_kappa_score(truths, predictions, labels=list(range(self.n_classes)))        
         qkappa = metrics.cohen_kappa_score(truths, predictions, 
                                           labels=list(range(self.n_classes)), weights='quadratic')
@@ -169,19 +175,27 @@ class MultiLabelClassificationMetrics:
         try:
             mAP = metrics.average_precision_score(truths, predictions, average='macro')
         except:
-            mAP = 0.                    
-        roc_auc = mean_roc_auc(truths, predictions)        
+            mAP = 0.  
+        try:                  
+            roc_auc = mean_roc_auc(truths, predictions)       
+        except: 
+            roc_auc = 0.5
+            print("Error in computing ROC-AUC")
         
         predictions = self.threshold_preds(predictions)
         self.confusion_matrix = metrics.multilabel_confusion_matrix(truths, predictions)     
         
         accuracy = metrics.accuracy_score(truths, predictions)
-        precision = metrics.precision_score(truths, predictions, average='macro', 
-                                            labels=self.labels, zero_division=0)
-        recall = metrics.recall_score(truths, predictions, average='macro', 
-                                            labels=self.labels, zero_division=0)
-        f1 = metrics.f1_score(truths, predictions, average='macro', 
-                                            labels=self.labels, zero_division=0)
+        # precision = metrics.precision_score(truths, predictions, average='macro', 
+        #                                     labels=self.labels, zero_division=0)
+        # recall = metrics.recall_score(truths, predictions, average='macro', 
+        #                                     labels=self.labels, zero_division=0)
+        # f1 = metrics.f1_score(truths, predictions, average='macro', 
+        #                                     labels=self.labels, zero_division=0)
+        
+        precision = metrics.precision_score(truths, predictions,labels=self.labels, zero_division=0)
+        recall = metrics.recall_score(truths, predictions,labels=self.labels, zero_division=0)
+        f1 = metrics.f1_score(truths, predictions, labels=self.labels, zero_division=0)
         
         # return metrics as dictionary
         return edict({self.prefix + "accuracy" : round(accuracy, 3),
