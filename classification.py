@@ -13,6 +13,7 @@ from defaults import *
 from utils.system_def import *
 from utils.launch import dist, launch, synchronize
 from utils.helpfuns import check_dir
+from tensorboardX import SummaryWriter
 
 global debug
 
@@ -21,7 +22,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='The main takes as \
                              argument the parameters dictionary from a json file')
     parser.add_argument('--params_path', type=str, required=False, 
-                        default="./params.json",
+                        default="/data/mkondrac/foundation_model_cardio/code/Foundation-Medical/params.json",
                         help='Give the path of the json file which contains the training parameters')
     parser.add_argument('--checkpoint', type=str, required=False, help='Give a valid checkpoint name')
     parser.add_argument('--test', action='store_true', default=False, help='Flag for testing')
@@ -45,6 +46,7 @@ def parse_arguments():
 
 
 def update_params_from_args(params, args):
+    
     if args.gpu:
         prev_gpu = params.system_params.which_GPUs
         params.system_params.which_GPUs = args.gpu  # change the value in-place
@@ -94,6 +96,7 @@ def update_params_from_args(params, args):
     if args.lr:
         params['optimization_params']['default']['optimizer']['params']['lr'] = args.lr
         print('Changed learning rate to: \033[1m{}\033[0m'.format(args.lr))
+        
 
 def save_config(params_file, save_dir, model_name):
     path = os.path.join(save_dir, "configs", model_name) 
@@ -110,6 +113,16 @@ def update_warmup(params):
         params["optimization_params"]["default"]["scheduler"]["params"]["LinearWarmup"]["warmup_iters"] = 1000
     else:
         params["optimization_params"]["default"]["scheduler"]["params"]["LinearWarmup"]["warmup_iters"] = 0
+
+
+def update_metadata(params):
+    params['dataset_params']['use_metadata'] = False
+    if params['model_params']['use_metadata']:
+        params['dataset_params']['use_metadata'] = params['model_params']['use_metadata']
+    
+    params['dataset_params']['no_visual_encoding'] = False
+    if params['model_params']['no_visual_encoding']:
+        params['dataset_params']['no_visual_encoding'] = params['model_params']['no_visual_encoding']
 
 
 def main(parameters, args):
@@ -142,10 +155,15 @@ def main(parameters, args):
     
     # initialize logger
     if wrapper.is_rank0:
-        log_params = wrapper.parameters.log_params    
+        log_params = wrapper.parameters.log_params
         training_params = wrapper.parameters.training_params
+        foundation_params = wrapper.parameters.foundation_params
+        # if wrapper.log_params['run_name'] == "DEFINED_BY_MODEL_NAME":
+        #     log_params['run_name'] = training_params.model_name  
         if wrapper.log_params['run_name'] == "DEFINED_BY_MODEL_NAME":
-            log_params['run_name'] = training_params.model_name  
+            log_params['run_name'] = foundation_params.backbone_type 
+            if foundation_params.freeze_backbone :
+                log_params['run_name'] += " freezed" 
         if args.debug:
             os.environ['WANDB_MODE'] = 'dryrun'
         if not args.test:
@@ -155,7 +173,7 @@ def main(parameters, args):
             else:
                 print("Using WANDB logging")
                 wandb.init(project=log_params.project_name, 
-                           entity='your_entity',
+                           entity='maxim-kondracki-epfl',
                            name=log_params.run_name, 
                            config=wrapper.parameters,
                            resume=True if training_params.restore_session else False)
@@ -179,9 +197,11 @@ if __name__ == '__main__':
     parameters = edict(load_params(args))
     update_params_from_args(parameters, args)
     update_warmup(parameters)
+    update_metadata(parameters)
 
     try:
-        launch(main, (parameters, args))
+        # launch(main, (parameters, args))
+        launch_single_GPU(main, (parameters, args)) ### HERE TO CHANGE CUDA !!
     except Exception as e:       
         if dist.is_initialized():
             dist.destroy_process_group()            
